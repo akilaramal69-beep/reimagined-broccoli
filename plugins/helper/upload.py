@@ -701,15 +701,15 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                 for f in formats:
                     if f.get("vcodec") == "none" and f.get("acodec") != "none":
                         size = f.get("filesize") or f.get("filesize_approx") or 0
+                        tbr = f.get("tbr") or 0
                         # Try to estimate from bitrate if no filesize
-                        if size == 0:
-                            tbr = f.get("tbr") or 0
+                        if size == 0 and tbr:
                             duration = info.get("duration") or 0
-                            if tbr and duration:
+                            if duration:
                                 size = int((tbr * 1024 / 8) * duration)
                         # Group by approximate bitrate range
                         bitrate_range = (tbr // 64) * 64 if tbr else 0
-                        if bitrate_range not in audio_sizes or size > audio_sizes[bitrate_range]:
+                        if bitrate_range not in audio_sizes or size > audio_sizes.get(bitrate_range, 0):
                             audio_sizes[bitrate_range] = size
                 
                 # Get the best audio size available
