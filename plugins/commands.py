@@ -292,12 +292,13 @@ async def resolve_rename(
         except Exception:
             pass
     
-    # If not supported or local fetch failed, try link-api fallback
-    if (not res or not res.get("formats")) and Config.LINK_API_URL:
+    # If not supported or local fetch failed, try link-api/local extractor fallback
+    if not res or not res.get("formats"):
         try:
             if not is_supported:
                 await prompt_msg.edit_text("🔍 **Analyzing via External Engine…**")
-            res = await fetch_ytdlp_formats(url) # This now has builtin link-api fallback
+            # fetch_ytdlp_formats already has local extractor fallback built-in
+            res = await fetch_ytdlp_formats(url)
         except Exception:
             pass
 

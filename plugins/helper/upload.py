@@ -230,7 +230,11 @@ YTDLP_DOMAINS = {
 # Domains where cobalt API can be used as an alternative/fallback
 COBALT_DOMAINS = {
     "youtube.com", "youtu.be",
+    "instagram.com", "ddinstagram.com", "i.instagram.com",
     "reddit.com", "v.redd.it", "redd.it",
+    "facebook.com", "fb.watch", "fb.com",
+    "twitter.com", "x.com",
+    "tiktok.com",
 }
 
 
@@ -267,32 +271,31 @@ async def fetch_link_api(url: str) -> str | None:
     Uses local extractor if LINK_API_URL is not set, otherwise uses external API.
     Returns the best direct URL string, or None if unavailable.
     """
-    # Try local extractor if no external API URL is configured
-    if not Config.LINK_API_URL:
-        try:
-            from plugins.helper.extractor import extract_links
-            Config.LOGGER.info(f"Using local extractor for link grab: {url}")
-            result = await extract_links(url, use_browser=True, timeout=30)
-            if result:
-                best = result.get("best_link")
-                if best:
-                    Config.LOGGER.info(f"Local extractor best_link: {best[:80]}")
-                    return best
-                links = result.get("links", [])
-                if links:
-                    def _score(link: dict) -> tuple:
-                        has_av = link.get("has_video", False) and link.get("has_audio", False)
-                        is_mp4 = link.get("stream_type", "") == "mp4"
-                        height = link.get("height") or 0
-                        return (has_av, is_mp4, height)
-                    links_sorted = sorted(links, key=_score, reverse=True)
-                    chosen = links_sorted[0].get("url")
-                    Config.LOGGER.info(f"Local extractor chose: {str(chosen)[:80]}")
-                    return chosen
-        except Exception as e:
-            Config.LOGGER.warning(f"Local extractor failed for {url}: {e}")
-            return None
-
+    # Try local extractor first (works without external API)
+    try:
+        from plugins.helper.extractor import extract_links
+        Config.LOGGER.info(f"Using local extractor for link grab: {url}")
+        result = await extract_links(url, use_browser=True, timeout=45)
+        if result:
+            best = result.get("best_link")
+            if best:
+                Config.LOGGER.info(f"Local extractor best_link: {best[:80]}")
+                return best
+            links = result.get("links", [])
+            if links:
+                def _score(link: dict) -> tuple:
+                    has_av = link.get("has_video", False) and link.get("has_audio", False)
+                    is_mp4 = link.get("stream_type", "") == "mp4"
+                    height = link.get("height") or 0
+                    return (has_av, is_mp4, height)
+                links_sorted = sorted(links, key=_score, reverse=True)
+                chosen = links_sorted[0].get("url")
+                Config.LOGGER.info(f"Local extractor chose: {str(chosen)[:80]}")
+                return chosen
+    except Exception as e:
+        Config.LOGGER.warning(f"Local extractor failed for {url}: {e}")
+    
+    # Fallback to external API if configured
     if not Config.LINK_API_URL:
         return None
 
