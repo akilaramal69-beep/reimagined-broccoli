@@ -409,24 +409,7 @@ async def fetch_ytdlp_title(url: str) -> str | None:
     Extract the video title from yt-dlp (no download).
     Returns a clean filename like 'My Video Title.mp4', or None on failure.
     """
-    if not YTDLP_AVAILABLE:
-        return None
-        
-    # PRIMARY FOR YOUTUBE: Try external API first to bypass bot detection
-    if "youtube.com" in url or "youtu.be" in url:
-        Config.LOGGER.info(f"Primary YouTube title extraction via external API: {url}")
-        info = await external_extract_ytdlp(url)
-        if info:
-            # Handle Playlists: If info has 'entries', take the first one
-            if "entries" in info and info["entries"]:
-                info = info["entries"][0]
-                Config.LOGGER.info(f"Detected playlist, resolving to first entry: {info.get('title')}")
-
-            title = info.get("title") or info.get("id") or "video"
-            title = re.sub(r'[\\/*?"<>|:\n\r\t]', "_", title).strip()
-            ext = info.get("ext") or "mp4"
-            return f"{title[:80]}.{ext}"
-
+    # Block YouTube - title extraction disabled
     # SECONDARY FALLBACK: Try external API (link-api) if local yt-dlp fails
     if Config.LINK_API_URL:
         Config.LOGGER.info(f"Fallback title extraction via link-api for: {url}")
@@ -484,7 +467,23 @@ async def fetch_ytdlp_title(url: str) -> str | None:
         except Exception:
             return None
 
-    return await loop.run_in_executor(None, _fetch)
+    res = await loop.run_in_executor(None, _fetch)
+    
+    # Fallback: If local yt-dlp failed, try local extractor
+    if not res:
+        Config.LOGGER.info(f"Local yt-dlp title failed, trying local extractor for: {url}")
+        try:
+            from plugins.helper.extractor import extract_raw_ytdlp
+            info = await extract_raw_ytdlp(url)
+            if info:
+                title = info.get("title") or "video"
+                title = re.sub(r'[\\/*?"<>|:\n\r\t]', "_", title).strip()
+                ext = "mp4"
+                return f"{title[:80]}.{ext}"
+        except Exception as e:
+            Config.LOGGER.error(f"Local extractor title fallback failed: {e}")
+    
+    return res
 
 
 async def fetch_http_filename(url: str, default_name: str = "downloaded_file") -> str:
@@ -560,90 +559,14 @@ async def fetch_ytdlp_formats(url: str) -> dict:
     Fetch available video formats from yt-dlp.
     Returns: {"formats": list[dict], "title": str}
     """
+    # Block YouTube
+    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+        return {"formats": [], "title": "YouTube blocked"}
+    
     if not YTDLP_AVAILABLE:
         return {"formats": [], "title": ""}
 
-    # PRIMARY FOR YOUTUBE: Try external API first to bypass bot detection
-    if "youtube.com" in url or "youtu.be" in url:
-        Config.LOGGER.info(f"Primary YouTube format extraction via external API: {url}")
-        info = await external_extract_ytdlp(url)
-        if info:
-            # Handle Playlists: If info has 'entries', take the first one
-            if "entries" in info and info["entries"]:
-                info = info["entries"][0]
-                Config.LOGGER.info(f"Detected playlist in format extraction, resolving to first entry: {info.get('title')}")
-
-            formats = info.get("formats", [])
-            title = info.get("title", "video")
-
-            best_audio_size = 0
-            for f in formats:
-                if f.get("vcodec") == "none" and f.get("acodec") != "none":
-                    size = f.get("filesize") or f.get("filesize_approx") or 0
-                    if size > best_audio_size:
-                        best_audio_size = size
-
-            available = {}
-            for f in formats:
-                height = f.get("height")
-                if height and f.get("vcodec") != "none":
-                    res = f"{height}p"
-                    available[res] = f
-
-            format_results = []
-            sorted_res = sorted(
-                available.keys(),
-                key=lambda x: int(re.search(r'(\d+)p', x).group(1)) if re.search(r'(\d+)p', x) else 0,
-                reverse=True
-            )
-
-            for res in sorted_res:
-                f = available[res]
-                size = f.get("filesize") or f.get("filesize_approx")
-                has_audio = f.get("acodec") != "none"
-                
-                # Estimate size if missing using bitrate and duration
-                if size is None:
-                    tbr = f.get("tbr")
-                    duration = info.get("duration")
-                    if tbr and duration:
-                        size = int((tbr * 1024 / 8) * duration)
-
-                if not has_audio and size is not None and best_audio_size > 0:
-                    size += best_audio_size
-
-                format_results.append({
-                    "format_id": f["format_id"],
-                    "resolution": res,
-                    "ext": f.get("ext", "mp4"),
-                    "filesize": size,
-                    "has_audio": has_audio,
-                    "bitrate": f.get("tbr") or f.get("vbr") or 0,
-                    "url": f.get("url")
-                })
-
-            if format_results:
-                # ── Final safety probe for missing YouTube filesizes ─────────────────
-                session = await get_http_session()
-                for f_dict in format_results:
-                    if f_dict.get("filesize") is None and f_dict.get("url"):
-                        try:
-                            async with session.head(
-                                f_dict["url"], allow_redirects=True, 
-                                timeout=aiohttp.ClientTimeout(total=5),
-                                proxy=Config.PROXY
-                            ) as head:
-                                cl = head.headers.get("Content-Length")
-                                if cl and cl.isdigit():
-                                    f_dict["filesize"] = int(cl)
-                        except Exception:
-                            pass
-                    # Remove temporary URL before sending to client
-                    if "url" in f_dict:
-                        del f_dict["url"]
-                
-                return {"formats": format_results, "title": title}
-
+    # Try local yt-dlp extraction
     loop = asyncio.get_running_loop()
 
     def _fetch():
@@ -858,6 +781,32 @@ async def fetch_ytdlp_formats(url: str) -> dict:
             # Remove temporary URL before sending to client
             if "url" in f_dict:
                 del f_dict["url"]
+
+    # Fallback: If local yt-dlp failed or returned no formats, try local extractor
+    if not res or not res.get("formats"):
+        Config.LOGGER.info(f"Local yt-dlp failed, trying local extractor for: {url}")
+        try:
+            from plugins.helper.extractor import extract_raw_ytdlp
+            info = await extract_raw_ytdlp(url)
+            if info and info.get("formats"):
+                # Transform extractor formats to match expected format
+                formats = []
+                for f in info.get("formats", []):
+                    height = f.get("height") or 720
+                    formats.append({
+                        "format_id": f.get("format_id", "browser"),
+                        "resolution": f"{height}p",
+                        "ext": f.get("ext", "mp4"),
+                        "filesize": f.get("filesize"),
+                        "has_audio": f.get("acodec") != "none",
+                        "bitrate": 0,
+                        "url": f.get("url")
+                    })
+                title = info.get("title", "video")
+                res = {"formats": formats, "title": title}
+                Config.LOGGER.info(f"Local extractor returned {len(formats)} formats for: {url}")
+        except Exception as e:
+            Config.LOGGER.error(f"Local extractor fallback failed: {e}")
 
     return res
 
