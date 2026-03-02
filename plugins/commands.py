@@ -13,7 +13,8 @@ from plugins.helper.database import add_user, get_user, update_user, is_banned
 from plugins.helper.upload import (
     download_url, upload_file, humanbytes,
     smart_output_name, is_ytdlp_url, fetch_ytdlp_title,
-    fetch_ytdlp_formats, get_best_filename, resolve_url
+    fetch_ytdlp_formats, get_best_filename, resolve_url,
+    get_file_category, probe_content_type
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +88,11 @@ Upload files up to **2 GB** directly to Telegram from any direct URL.
 #  Build the Mode-selection keyboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def mode_keyboard(user_id: int) -> InlineKeyboardMarkup:
+def mode_keyboard(user_id: int, document_only: bool = False) -> InlineKeyboardMarkup:
+    if document_only:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Upload as Document", callback_data=f"mode:{user_id}:doc")]
+        ])
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎬 Media", callback_data=f"mode:{user_id}:media"),
@@ -121,16 +126,16 @@ def quality_keyboard(user_id: int, formats: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-async def ask_mode(target_msg: Message, user_id: int, filename: str):
+async def ask_mode(target_msg: Message, user_id: int, filename: str, document_only: bool = False):
     """Edit or reply with the upload-mode selection prompt."""
     text = (
         f"📁 **File:** `{filename}`\n\n"
         "How should this file be uploaded?"
     )
     try:
-        await target_msg.edit_text(text, reply_markup=mode_keyboard(user_id))
+        await target_msg.edit_text(text, reply_markup=mode_keyboard(user_id, document_only))
     except Exception:
-        await target_msg.reply_text(text, reply_markup=mode_keyboard(user_id), quote=True)
+        await target_msg.reply_text(text, reply_markup=mode_keyboard(user_id, document_only), quote=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,9 +319,25 @@ async def resolve_rename(
         except Exception:
             pass
 
-    # Fallback/Direct loop: move straight to mode selection
+    # Fallback/Direct loop: probe URL to detect file type
+    from plugins.helper.upload import get_file_category, probe_content_type
+    
+    # Probe content type for accurate extension detection
+    mime = await probe_content_type(url)
+    file_category = get_file_category(url, mime)
+    
+    # For non-media files (archive, document, unknown), show document-only option
+    document_only = file_category not in ('video', 'audio', 'image')
+    
+    # If it's an image, try to get accurate extension from mime
+    if file_category == 'image' and mime:
+        ext = mimetypes.guess_extension(mime.split(';')[0].strip())
+        if ext and ext != '.jpe':
+            base_name = os.path.splitext(filename)[0]
+            filename = base_name + ext
+    
     PENDING_MODE[user_id] = {"url": url, "filename": filename, "format_id": None}
-    await ask_mode(prompt_msg, user_id, filename)
+    await ask_mode(prompt_msg, user_id, filename, document_only)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

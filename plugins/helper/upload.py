@@ -72,6 +72,101 @@ HLS_MIME_TYPES = {
     "video/mp2t",
 }
 
+# Media type detection
+IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.ico', '.tiff', '.tif'}
+VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.ts', '.m2ts'}
+AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma', '.opus'}
+ARCHIVE_EXTS = {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'}
+DOCUMENT_EXTS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv', '.epub', '.mobi'}
+
+MEDIA_TYPES = ('video/', 'audio/', 'image/')
+VIDEO_MIMES = {'video/mp4', 'video/webm', 'video/x-matroska', 'video/quicktime', 'video/x-msvideo'}
+AUDIO_MIMES = {'audio/mpeg', 'audio/mp4', 'audio/webm', 'audio/wav', 'audio/flac', 'audio/ogg'}
+IMAGE_MIMES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml'}
+
+
+def is_media_url(url: str, mime: str = None) -> tuple[bool, str]:
+    """
+    Check if URL is a media file (video/audio/image).
+    Returns (is_media, media_type) where media_type is 'video', 'audio', 'image', or 'unknown'
+    """
+    path = urllib.parse.urlparse(url).path.lower()
+    ext = os.path.splitext(path)[1]
+    
+    # Check by extension
+    if ext in IMAGE_EXTS:
+        return True, 'image'
+    if ext in VIDEO_EXTS:
+        return True, 'video'
+    if ext in AUDIO_EXTS:
+        return True, 'audio'
+    
+    # Check by MIME type if provided
+    if mime:
+        mime_lower = mime.lower()
+        if any(mime_lower.startswith(m) for m in MEDIA_TYPES):
+            if mime_lower.startswith('video/'):
+                return True, 'video'
+            if mime_lower.startswith('audio/'):
+                return True, 'audio'
+            if mime_lower.startswith('image/'):
+                return True, 'image'
+        if mime_lower in VIDEO_MIMES:
+            return True, 'video'
+        if mime_lower in AUDIO_MIMES:
+            return True, 'audio'
+        if mime_lower in IMAGE_MIMES:
+            return True, 'image'
+    
+    return False, 'unknown'
+
+
+def get_file_category(url: str, mime: str = None) -> str:
+    """
+    Get file category: 'video', 'audio', 'image', 'archive', 'document', or 'unknown'
+    """
+    path = urllib.parse.urlparse(url).path.lower()
+    ext = os.path.splitext(path)[1]
+    
+    # Check by extension
+    if ext in IMAGE_EXTS:
+        return 'image'
+    if ext in VIDEO_EXTS:
+        return 'video'
+    if ext in AUDIO_EXTS:
+        return 'audio'
+    if ext in ARCHIVE_EXTS:
+        return 'archive'
+    if ext in DOCUMENT_EXTS:
+        return 'document'
+    
+    # Check by MIME type
+    if mime:
+        mime_lower = mime.lower()
+        if any(mime_lower.startswith(m) for m in MEDIA_TYPES):
+            if mime_lower.startswith('video/'):
+                return 'video'
+            if mime_lower.startswith('audio/'):
+                return 'audio'
+            if mime_lower.startswith('image/'):
+                return 'image'
+    
+    return 'unknown'
+
+
+async def probe_content_type(url: str) -> str | None:
+    """Probe URL to get Content-Type header."""
+    session = await get_http_session()
+    try:
+        async with session.head(
+            url, allow_redirects=True,
+            timeout=aiohttp.ClientTimeout(total=10),
+            proxy=Config.PROXY
+        ) as head:
+            return head.headers.get("Content-Type", "").split(";")[0].strip()
+    except Exception:
+        return None
+
 
 def needs_ffmpeg_download(url: str, mime: str) -> bool:
     """Return True if this URL must be downloaded with ffmpeg instead of aiohttp."""
@@ -210,6 +305,7 @@ def _get_ytdlp_extractors():
 YTDLP_DOMAINS = {
     "youtube.com", "youtu.be", "youtube-nocookie.com",
     "instagram.com",
+    "threads.com", "threads.net",
     "twitter.com", "x.com", "t.co",
     "tiktok.com", "vm.tiktok.com",
     "facebook.com", "fb.watch", "fb.com",

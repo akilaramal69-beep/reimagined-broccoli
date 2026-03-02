@@ -193,6 +193,7 @@ curl -X POST "http://localhost:8080/extract" \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ALLOW_BOT_URL_UPLOAD` | True | Set to False to force users to use Mini App |
 | `BOT_USERNAME` | UrlUploaderBot | Bot username |
 | `ADMIN` | - | Space-separated admin user IDs |
 | `BANNED_USERS` | - | Space-separated banned user IDs |
