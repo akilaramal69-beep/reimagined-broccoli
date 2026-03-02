@@ -1560,26 +1560,26 @@ async def download_url(url: str, filename: str, progress_msg, start_time_ref: li
     # ── Fallback B: link-api for unknown URLs ─────────────────────────────────
     # For URLs that are not handled by yt-dlp or cobalt, try link-api to resolve
     # the actual stream URL (headless browser + yt-dlp server-side).
-    if Config.LINK_API_URL:
-        try:
-            Config.LOGGER.info(f"Trying link-api for unknown URL: {url[:80]}")
-            link_api_url = await fetch_link_api(url)
-            if link_api_url:
-                Config.LOGGER.info(f"link-api resolved: {link_api_url[:80]}...")
-                # Update progress and re-route to the resolved direct URL
-                await progress_msg.edit_text(
-                    "📥 **Resolving stream…**\n_(grabbed direct link, downloading…)_",
-                    reply_markup=cancel_button(user_id)
-                )
-                # Recurse with the direct URL so it goes through the normal probe path
-                return await download_url(
-                    link_api_url, filename, progress_msg, start_time_ref, user_id,
-                    format_id=format_id, cancel_ref=cancel_ref
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception as link_e:
-            Config.LOGGER.warning(f"link-api fallback failed: {link_e}")
+    # Try local extractor first, then external API if configured
+    try:
+        Config.LOGGER.info(f"Trying link-api/local extractor for unknown URL: {url[:80]}")
+        link_api_url = await fetch_link_api(url)
+        if link_api_url:
+            Config.LOGGER.info(f"link-api resolved: {link_api_url[:80]}...")
+            # Update progress and re-route to the resolved direct URL
+            await progress_msg.edit_text(
+                "📥 **Resolving stream…**\n_(grabbed direct link, downloading…)_",
+                reply_markup=cancel_button(user_id)
+            )
+            # Recurse with the direct URL so it goes through the normal probe path
+            return await download_url(
+                link_api_url, filename, progress_msg, start_time_ref, user_id,
+                format_id=format_id, cancel_ref=cancel_ref
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as link_e:
+        Config.LOGGER.warning(f"link-api/local extractor fallback failed: {link_e}")
 
     # Transition state for WebApp
     WEBAPP_PROGRESS[user_id] = {
