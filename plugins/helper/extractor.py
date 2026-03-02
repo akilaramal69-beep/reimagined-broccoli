@@ -260,15 +260,22 @@ async def extract_raw_ytdlp(url: str) -> dict:
         }
 
         for i, link in enumerate(res.get("links", [])):
+            has_video = link.get("has_video", True)
+            has_audio = link.get("has_audio", True)
+            height = link.get("height") or 720
+            
             fmt = {
                 "format_id": f"browser_{i}",
                 "url": link["url"],
                 "ext": (link.get("content_type") or "video/mp4").split("/")[-1] or "mp4",
-                "width": link.get("width", 1280),
-                "height": link.get("height", 720),
-                "vcodec": "avc1" if link.get("has_video") else "none",
-                "acodec": "mp4a" if link.get("has_audio") else "none",
+                "width": link.get("width", 1920),
+                "height": height,
+                "resolution": f"{height}p",
+                "vcodec": "avc1" if has_video else "none",
+                "acodec": "mp4a" if has_audio else "none",
                 "filesize": link.get("filesize") or link.get("content_length"),
+                "has_audio": has_audio,
+                "bitrate": 0,
                 "source": link.get("source")
             }
             

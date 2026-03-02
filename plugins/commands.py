@@ -97,15 +97,22 @@ def mode_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def quality_keyboard(user_id: int, formats: list) -> InlineKeyboardMarkup:
-    """Build a keyboard for selecting video resolution."""
+    """Build a keyboard for selecting video resolution with quality info."""
     buttons = []
     # Add resolutions in rows of 2
     for i in range(0, len(formats), 2):
         row = []
         for f in formats[i:i+2]:
             size_val = f.get('filesize', 0)
-            size_str = humanbytes(size_val) if size_val > 0 else "Unknown Size"
-            label = f"{f['resolution']} ({size_str})"
+            size_str = humanbytes(size_val) if size_val and size_val > 0 else "Unknown"
+            
+            # Show audio indicator and bitrate
+            has_audio = f.get('has_audio', True)
+            bitrate = f.get('bitrate', 0)
+            audio_icon = "🔊" if has_audio else "🔇"
+            bitrate_str = f" {bitrate//1000}k" if bitrate else ""
+            
+            label = f"{f['resolution']} {audio_icon} ({size_str}{bitrate_str})"
             row.append(InlineKeyboardButton(label, callback_data=f"qual:{user_id}:{f['format_id']}"))
         buttons.append(row)
     # Add a "Best Quality" button at the end

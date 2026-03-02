@@ -29,6 +29,23 @@ IGNORE_PATTERNS = re.compile(
 )
 MIN_CONTENT_LENGTH = 50_000
 
+
+def _guess_height_from_url(url: str) -> int | None:
+    """Guess video height from URL patterns."""
+    url_lower = url.lower()
+    if "1080" in url_lower or "fhd" in url_lower or "fullhd" in url_lower:
+        return 1080
+    elif "720" in url_lower or "/hd/" in url_lower:
+        return 720
+    elif "480" in url_lower:
+        return 480
+    elif "360" in url_lower:
+        return 360
+    elif "240" in url_lower:
+        return 240
+    return None
+
+
 SNIFFER_JS = r"""
 (function() {
     const seenUrls = new Set();
@@ -210,7 +227,17 @@ async def intercept_browser(url: str, timeout_ms: int = 25000) -> list[dict]:
 
                 is_media_type = any(mt in content_type for mt in MEDIA_CONTENT_TYPES)
 
+                # CDN quality detection - check for high-quality patterns
+                quality_indicators = {
+                    "has_video": "video" in content_type or ".mp4" in resp_url.lower() or ".m4v" in resp_url.lower(),
+                    "has_audio": "audio" in content_type or ".mp3" in resp_url.lower() or ".m4a" in resp_url.lower(),
+                    "is_hls": ".m3u8" in resp_url.lower(),
+                    "is_dash": ".mpd" in resp_url.lower(),
+                    "height": _guess_height_from_url(resp_url),
+                }
+
                 if is_media_type or is_media_url:
+                    # Only filter very small files (<50KB) unless it's a direct media URL
                     if content_length > 0 and content_length < MIN_CONTENT_LENGTH and not is_media_url:
                         return
                     _add_media_entry(
@@ -219,6 +246,11 @@ async def intercept_browser(url: str, timeout_ms: int = 25000) -> list[dict]:
                         source="response_header",
                         content_type=content_type,
                         content_length=content_length,
+                        has_video=quality_indicators.get("has_video"),
+                        has_audio=quality_indicators.get("has_audio"),
+                        height=quality_indicators.get("height"),
+                        is_hls=quality_indicators.get("is_hls"),
+                        is_dash=quality_indicators.get("is_dash"),
                     )
             except Exception:
                 pass
@@ -302,6 +334,22 @@ async def intercept_browser(url: str, timeout_ms: int = 25000) -> list[dict]:
     return list(found.values())
 
 
+def _guess_height_from_url(url: str) -> int | None:
+    """Guess video height from URL patterns."""
+    url_lower = url.lower()
+    if "1080" in url_lower or "fhd" in url_lower or "fullhd" in url_lower:
+        return 1080
+    elif "720" in url_lower or "hd" in url_lower:
+        return 720
+    elif "480" in url_lower:
+        return 480
+    elif "360" in url_lower:
+        return 360
+    elif "240" in url_lower:
+        return 240
+    return None
+
+
 def _add_media_entry(
     found: dict,
     url: str,
@@ -309,6 +357,11 @@ def _add_media_entry(
     request=None,
     content_type: str = "",
     content_length: int = 0,
+    has_video: bool = True,
+    has_audio: bool = True,
+    height: int | None = None,
+    is_hls: bool = False,
+    is_dash: bool = False,
 ):
     if url in found:
         return
@@ -316,9 +369,9 @@ def _add_media_entry(
     parsed = urlparse(url)
     path = parsed.path.lower()
 
-    if ".m3u8" in path:
+    if ".m3u8" in path or is_hls:
         stream_type = "hls"
-    elif ".mpd" in path:
+    elif ".mpd" in path or is_dash:
         stream_type = "dash"
     elif ".mp4" in path or ".m4v" in path:
         stream_type = "mp4"
@@ -335,6 +388,10 @@ def _add_media_entry(
     else:
         stream_type = "unknown"
 
+    # Guess height from URL if not provided
+    if height is None:
+        height = _guess_height_from_url(url)
+
     found[url] = {
         "url": url,
         "stream_type": stream_type,
@@ -342,4 +399,7 @@ def _add_media_entry(
         "content_length": content_length or None,
         "source": source,
         "referer": request.headers.get("referer") if request else None,
+        "has_video": has_video,
+        "has_audio": has_audio,
+        "height": height,
     }

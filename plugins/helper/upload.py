@@ -600,6 +600,7 @@ async def fetch_ytdlp_formats(url: str) -> dict:
             for res in sorted_res:
                 f = available[res]
                 size = f.get("filesize") or f.get("filesize_approx")
+                has_audio = f.get("acodec") != "none"
                 
                 # Estimate size if missing using bitrate and duration
                 if size is None:
@@ -608,7 +609,7 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                     if tbr and duration:
                         size = int((tbr * 1024 / 8) * duration)
 
-                if f.get("acodec") == "none" and size is not None and best_audio_size > 0:
+                if not has_audio and size is not None and best_audio_size > 0:
                     size += best_audio_size
 
                 format_results.append({
@@ -616,6 +617,8 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                     "resolution": res,
                     "ext": f.get("ext", "mp4"),
                     "filesize": size,
+                    "has_audio": has_audio,
+                    "bitrate": f.get("tbr") or f.get("vbr") or 0,
                     "url": f.get("url")
                 })
 
@@ -689,12 +692,32 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                         if size > best_audio_size:
                             best_audio_size = size
 
-                # 2. Extract and normalize video formats
+                # 2. Extract and normalize video formats with CDN quality detection
                 available = {}
+                audio_sizes = {}  # Track audio sizes per resolution
+                
+                # First pass: collect audio sizes for each resolution
+                for f in formats:
+                    if f.get("vcodec") == "none" and f.get("acodec") != "none":
+                        size = f.get("filesize") or f.get("filesize_approx") or 0
+                        # Try to estimate from bitrate if no filesize
+                        if size == 0:
+                            tbr = f.get("tbr") or 0
+                            duration = info.get("duration") or 0
+                            if tbr and duration:
+                                size = int((tbr * 1024 / 8) * duration)
+                        # Group by approximate bitrate range
+                        bitrate_range = (tbr // 64) * 64 if tbr else 0
+                        if bitrate_range not in audio_sizes or size > audio_sizes[bitrate_range]:
+                            audio_sizes[bitrate_range] = size
+                
+                # Get the best audio size available
+                best_audio_size = max(audio_sizes.values()) if audio_sizes else 0
+                
                 for f in formats:
                     if f.get("vcodec") == "none":
                         continue
-                        
+                    
                     # Extract dimensions
                     w = f.get("width") or 0
                     h = f.get("height") or 0
@@ -707,7 +730,7 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                             w = w or int(m.group(1))
                             h = h or int(m.group(2))
                     
-                    # Handle legacy Facebook tags
+                    # Handle legacy Facebook tags and other extractors
                     if not h:
                         fid = str(f.get("format_id", "")).lower()
                         if fid == "hd": h = 720
@@ -718,31 +741,45 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                         elif "360" in fid: h = 360
                     
                     if h:
-                        # Resolution Label: Use min(w, h) for vertical videos (e.g. 1080x1920 -> 1080p)
+                        # Resolution Label: Use min(w, h) for vertical videos
                         label_res = min(w, h) if (w and h) else h
                         res_key = f"{label_res}p"
                         
+                        # Calculate quality score: resolution * 1000 + bitrate
+                        # This prioritizes higher resolution but breaks ties with bitrate
+                        tbr = f.get("tbr") or f.get("vbr") or 0
+                        quality_score = (label_res * 1000) + tbr
+                        
+                        # Check if this is a combined (video+audio) format
+                        has_audio = f.get("acodec") != "none"
+                        
                         # Selection Strategy:
-                        # a. Prefer formats WITH audio (merged) to reduce post-download issues.
-                        # b. Pick higher bitrate between similar candidates.
+                        # a. Prefer formats WITH audio (merged) - combined formats are better
+                        # b. Higher bitrate within same resolution = higher quality CDN
                         if res_key not in available:
-                            available[res_key] = f
+                            available[res_key] = (f, quality_score, has_audio)
                         else:
-                            curr_f = available[res_key]
-                            curr_has_audio = curr_f.get("acodec") != "none"
-                            new_has_audio = f.get("acodec") != "none"
+                            curr_f, curr_score, curr_has_audio = available[res_key]
+                            new_has_audio = has_audio
+                            curr_has_audio = curr_has_audio
                             
-                            # Audio priority
+                            # If new has audio and current doesn't, prefer new
                             if new_has_audio and not curr_has_audio:
-                                available[res_key] = f
+                                available[res_key] = (f, quality_score, has_audio)
                             elif not new_has_audio and curr_has_audio:
                                 continue
                             else:
-                                # Both same: Bitrate priority
-                                curr_rate = curr_f.get("tbr") or curr_f.get("vbr") or 0
-                                new_rate = f.get("tbr") or f.get("vbr") or 0
-                                if new_rate >= curr_rate:
-                                    available[res_key] = f
+                                # Both have audio or both don't: pick higher quality (bitrate)
+                                if quality_score > curr_score:
+                                    available[res_key] = (f, quality_score, has_audio)
+                
+                # 3. Build result list
+                results = []
+                sorted_res = sorted(
+                    available.keys(), 
+                    key=lambda x: int(re.search(r'(\d+)p', x).group(1)) if re.search(r'(\d+)p', x) else 0, 
+                    reverse=True
+                )
                 
                 # 3. Build result list
                 results = []
@@ -799,11 +836,14 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                 height = f.get("height")
                 if height and f.get("vcodec") != "none":
                     size = f.get("filesize") or f.get("filesize_approx")
+                    has_audio = f.get("acodec") != "none"
                     format_results.append({
                         "format_id": f["format_id"],
                         "resolution": f"{height}p",
                         "ext": f.get("ext", "mp4"),
                         "filesize": size,
+                        "has_audio": has_audio,
+                        "bitrate": f.get("tbr") or f.get("vbr") or 0,
                         "url": f.get("url")
                     })
             if format_results:
