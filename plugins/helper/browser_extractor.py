@@ -27,10 +27,9 @@ IGNORE_PATTERNS = re.compile(
     r"|\.php|\.html|\.htm|\.jsp|\.aspx|/ads/|/ad/|/pixel)",
     re.IGNORECASE,
 )
-
 MIN_CONTENT_LENGTH = 50_000
 
-SNIFFER_JS = """
+SNIFFER_JS = r"""
 (function() {
     const seenUrls = new Set();
     const logMedia = (url, source) => {
@@ -242,7 +241,7 @@ async def intercept_browser(url: str, timeout_ms: int = 25000) -> list[dict]:
                 frames = page.frames
                 for frame in frames:
                     try:
-                        dom_links = await frame.evaluate("""() => {
+                        dom_links = await frame.evaluate(r"""() => {
                             const urls = new Set();
                             document.querySelectorAll('video, audio, source').forEach(el => {
                                 if (el.src) urls.add(el.src);

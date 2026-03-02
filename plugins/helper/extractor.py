@@ -2,8 +2,14 @@ import asyncio
 import re
 import httpx
 from typing import Optional
-from plugins.helper.browser_extractor import intercept_browser, MEDIA_URL_PATTERNS
 from plugins.config import Config
+
+try:
+    from plugins.helper.browser_extractor import intercept_browser, MEDIA_URL_PATTERNS
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    MEDIA_URL_PATTERNS = re.compile(r"(\.(mp4|m3u8|m4v|m4a|mpd|ts|webm|mkv|flv|avi|mov|aac|mp3|ogg|opus)([?&]|$))|remote_control\.php", re.IGNORECASE)
 
 SEGMENT_PATTERNS = re.compile(
     r"[-_](seg|chunk|part|frag|fragment|track|init|video\d|audio\d)[-_]|\d+\.ts|\d+\.m4v",
@@ -17,7 +23,7 @@ async def extract_links(url: str, use_browser: bool = True, timeout: int = 25) -
 
     is_direct = bool(MEDIA_URL_PATTERNS.search(url.split('?')[0]))
 
-    if use_browser:
+    if use_browser and PLAYWRIGHT_AVAILABLE:
         try:
             if not is_direct:
                 browser_results = await intercept_browser(url, timeout_ms=timeout * 1000)
@@ -29,6 +35,27 @@ async def extract_links(url: str, use_browser: bool = True, timeout: int = 25) -
                 }]
         except Exception as e:
             errors.append(f"browser_error: {e}")
+    elif use_browser and not PLAYWRIGHT_AVAILABLE:
+        errors.append("Playwright not available - falling back to yt-dlp")
+
+    if not browser_results:
+        # Fallback: try yt-dlp extraction
+        try:
+            import yt_dlp
+            ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info and info.get('url'):
+                    browser_results = [{
+                        "url": info.get('url'),
+                        "stream_type": "ytdlp",
+                        "source": "ytdlp_fallback",
+                        "title": info.get('title'),
+                        "thumbnail": info.get('thumbnail'),
+                        "duration": info.get('duration')
+                    }]
+        except Exception as e:
+            errors.append(f"ytdlp_error: {e}")
 
     if not browser_results:
         raise RuntimeError(

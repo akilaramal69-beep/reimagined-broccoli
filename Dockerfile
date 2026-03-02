@@ -25,6 +25,8 @@ RUN apt-get update && \
     libcairo2 \
     libasound2 \
     libatspi2.0-0 \
+    fonts-unifont \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -34,7 +36,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers
-RUN playwright install chromium --with-deps
+RUN playwright install chromium || true
 
 # Copy project files
 COPY . .
