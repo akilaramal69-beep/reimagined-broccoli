@@ -704,16 +704,8 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                     reverse=True
                 )
                 
-                # 3. Build result list
-                results = []
-                sorted_res = sorted(
-                    available.keys(), 
-                    key=lambda x: int(re.search(r'(\d+)p', x).group(1)) if re.search(r'(\d+)p', x) else 0, 
-                    reverse=True
-                )
-                
                 for res in sorted_res:
-                    f = available[res]
+                    f, _, _ = available[res]
                     size = f.get("filesize") or f.get("filesize_approx")
                     
                     # Estimation
@@ -732,6 +724,8 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                         "resolution": res,
                         "ext": f.get("ext", "mp4"),
                         "filesize": size,
+                        "has_audio": f.get("acodec") != "none",
+                        "bitrate": f.get("tbr") or f.get("vbr") or 0,
                         "url": f.get("url")
                     })
                 
@@ -742,7 +736,32 @@ async def fetch_ytdlp_formats(url: str) -> dict:
 
     res = await loop.run_in_executor(None, _fetch)
     
-    # SECONDARY FALLBACK: If local yt-dlp format extraction failed, try external API
+    # SECONDARY FALLBACK: If local yt-dlp failed, try local extractor
+    if not res or not res.get("formats"):
+        Config.LOGGER.info(f"Local yt-dlp failed, trying local extractor for: {url}")
+        try:
+            from plugins.helper.extractor import extract_raw_ytdlp
+            info = await extract_raw_ytdlp(url)
+            if info and info.get("formats"):
+                formats = []
+                for f in info.get("formats", []):
+                    height = f.get("height") or 720
+                    formats.append({
+                        "format_id": f.get("format_id", "browser"),
+                        "resolution": f"{height}p",
+                        "ext": f.get("ext", "mp4"),
+                        "filesize": f.get("filesize"),
+                        "has_audio": f.get("acodec") != "none",
+                        "bitrate": 0,
+                        "url": f.get("url")
+                    })
+                if formats:
+                    res = {"formats": formats, "title": info.get("title", "video")}
+                    Config.LOGGER.info(f"Local extractor returned {len(formats)} formats for: {url}")
+        except Exception as e:
+            Config.LOGGER.error(f"Local extractor fallback failed: {e}")
+    
+    # TERTIARY FALLBACK: Try external API if configured
     if (not res or not res.get("formats")) and Config.LINK_API_URL:
         Config.LOGGER.info(f"Fallback format extraction via link-api for: {url}")
         info = await external_extract_ytdlp(url)
