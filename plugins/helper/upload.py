@@ -361,6 +361,187 @@ def is_cobalt_url(url: str) -> bool:
         return False
 
 
+def is_youtube_url(url: str) -> bool:
+    """Return True if the URL is a YouTube URL."""
+    if not Config.YOUTUBE_API_URL:
+        return False
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
+        return host in ("youtube.com", "youtu.be", "www.youtube.com", "www.youtu.be")
+    except Exception:
+        return False
+
+
+async def fetch_youtube_info(url: str) -> dict | None:
+    """Fetch video info from the YouTube API."""
+    if not Config.YOUTUBE_API_URL:
+        return None
+    try:
+        session = await get_http_session()
+        api_url = f"{Config.YOUTUBE_API_URL.rstrip('/')}/api/info"
+        params = {"url": url}
+        async with session.get(api_url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                Config.LOGGER.info(f"YouTube API info fetched: {data.get('title', 'unknown')}")
+                return data
+            else:
+                Config.LOGGER.warning(f"YouTube API returned {resp.status}")
+    except Exception as e:
+        Config.LOGGER.warning(f"YouTube API fetch failed: {e}")
+    return None
+
+
+async def fetch_youtube_formats(url: str) -> dict:
+    """Fetch available formats from the YouTube API."""
+    if not Config.YOUTUBE_API_URL:
+        return {"formats": [], "title": ""}
+    
+    try:
+        session = await get_http_session()
+        api_url = f"{Config.YOUTUBE_API_URL.rstrip('/')}/api/formats"
+        params = {"url": url}
+        async with session.get(api_url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                formats = data.get("formats", [])
+                title = data.get("title", "video")
+                
+                format_results = []
+                for f in formats:
+                    height = f.get("height")
+                    if height and f.get("vcodec") != "none":
+                        format_results.append({
+                            "format_id": f.get("format_id", "youtube"),
+                            "resolution": f"{height}p",
+                            "ext": f.get("ext", "mp4"),
+                            "filesize": f.get("filesize"),
+                            "has_audio": f.get("acodec") != "none" and f.get("acodec") != "none",
+                            "bitrate": 0,
+                            "url": f.get("url")
+                        })
+                
+                return {"formats": format_results, "title": title}
+    except Exception as e:
+        Config.LOGGER.error(f"YouTube API formats failed: {e}")
+    
+    return {"formats": [], "title": ""}
+
+
+async def download_youtube(
+    url: str,
+    filename: str,
+    progress_msg,
+    start_time_ref: list,
+    user_id: int,
+    format_id: str = None,
+    cancel_ref: list = None,
+) -> tuple[str, str]:
+    """Download video using the YouTube API."""
+    if not Config.YOUTUBE_API_URL:
+        raise ValueError("YouTube API not configured")
+    
+    start_time_ref[0] = time.time()
+    out_dir = Config.DOWNLOAD_LOCATION
+    os.makedirs(out_dir, exist_ok=True)
+    safe_stem = re.sub(r'[\\/*?"<>|:]', "_", os.path.splitext(filename)[0])[:80]
+    
+    try:
+        await _safe_edit(
+            progress_msg,
+            "📥 **Fetching YouTube Download…** ⏳\n_Please wait…_",
+            reply_markup=cancel_button(user_id)
+        )
+        
+        WEBAPP_PROGRESS[user_id] = {
+            "action": "Fetching Download Link...",
+            "percentage": 5,
+            "current": "0 B",
+            "total": "Fetching...",
+            "speed": "---"
+        }
+        
+        session = await get_http_session()
+        api_url = f"{Config.YOUTUBE_API_URL.rstrip('/')}/api/download"
+        payload = {"url": url}
+        if format_id:
+            payload["formatId"] = format_id
+        
+        out_path = os.path.join(out_dir, f"{safe_stem}.mp4")
+        
+        await _safe_edit(
+            progress_msg,
+            "📥 **Downloading from YouTube…** ⬇️",
+            reply_markup=cancel_button(user_id)
+        )
+        
+        WEBAPP_PROGRESS[user_id] = {
+            "action": "Downloading from YouTube...",
+            "percentage": 10,
+            "current": "0 B",
+            "total": "Unknown",
+            "speed": "---"
+        }
+        
+        # Download the file directly from the API (it streams the file content)
+        total_size = 0
+        downloaded = 0
+        last_update = start_time_ref[0]
+        
+        async with session.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=600)) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise ValueError(f"YouTube API returned {resp.status}: {error_text[:200]}")
+            
+            # Get content-length if available
+            content_length = resp.headers.get("Content-Length")
+            if content_length and content_length.isdigit():
+                total_size = int(content_length)
+            
+            async with aiofiles.open(out_path, "wb") as f:
+                async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB chunks
+                    if cancel_ref and cancel_ref[0]:
+                        await f.close()
+                        if os.path.exists(out_path):
+                            os.remove(out_path)
+                        raise asyncio.CancelledError("Download cancelled by user.")
+                    
+                    await f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    # Update progress
+                    now = time.time()
+                    if now - last_update >= PROGRESS_UPDATE_DELAY:
+                        display_pct = (downloaded / total_size * 100) if total_size > 0 else 0
+                        WEBAPP_PROGRESS[user_id] = {
+                            "action": "Downloading from YouTube...",
+                            "current": humanbytes(downloaded),
+                            "total": humanbytes(total_size) if total_size > 0 else "Unknown",
+                            "speed": "---",
+                            "percentage": round(display_pct, 1)
+                        }
+                        try:
+                            await progress_msg.edit_text(
+                                f"📥 **Downloading from YouTube…** ⬇️\n\n"
+                                f"📁 **Name:** `{safe_stem}.mp4`\n"
+                                f"**Done:** {humanbytes(downloaded)}"
+                                + (f" / {humanbytes(total_size)}" if total_size > 0 else ""),
+                                reply_markup=cancel_button(user_id)
+                            )
+                        except Exception:
+                            pass
+                        last_update = now
+        
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            raise ValueError("Downloaded file is empty")
+        
+        mime = mimetypes.guess_type(out_path)[0] or "video/mp4"
+        return out_path, mime
+            
+    except Exception as e:
+        raise ValueError(f"YouTube download failed: {e}")
+
+
 async def fetch_link_api(url: str) -> str | None:
     """
     Call the link-api GET /grab endpoint to extract a direct download URL.
@@ -661,9 +842,21 @@ async def fetch_ytdlp_formats(url: str) -> dict:
     if not YTDLP_AVAILABLE:
         return {"formats": [], "title": ""}
 
-    # For YouTube: try external API first (falls back to local extractor if not configured)
+    # For YouTube: try custom YouTube API first
     if "youtube.com" in url.lower() or "youtu.be" in url.lower():
         Config.LOGGER.info(f"YouTube format extraction: {url}")
+        
+        # Try custom YouTube API if configured
+        if Config.YOUTUBE_API_URL:
+            try:
+                result = await fetch_youtube_formats(url)
+                if result and result.get("formats"):
+                    Config.LOGGER.info(f"YouTube API returned {len(result['formats'])} formats")
+                    return result
+            except Exception as e:
+                Config.LOGGER.warning(f"YouTube API failed, trying other methods: {e}")
+        
+        # Fall back to external extract
         info = await external_extract_ytdlp(url)
         if info and info.get("formats"):
             # Handle Playlists: If info has 'entries', take the first one
@@ -1670,6 +1863,14 @@ async def download_url(url: str, filename: str, progress_msg, start_time_ref: li
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5"
     }
+
+    # ── Route YouTube URLs through YouTube API ─────────────────────────────────
+    if is_youtube_url(url):
+        try:
+            await progress_msg.edit_text("📥 **Downloading from YouTube…** 🎬", reply_markup=cancel_button(user_id))
+            return await download_youtube(url, filename, progress_msg, start_time_ref, user_id, format_id=format_id, cancel_ref=cancel_ref)
+        except Exception as e:
+            Config.LOGGER.warning(f"YouTube API failed, falling back to yt-dlp: {e}")
 
     # ── Route yt-dlp-supported platforms ─────────────────────────────────────
     if is_ytdlp_url(url):

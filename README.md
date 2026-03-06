@@ -73,6 +73,7 @@ LOG_CHANNEL=-1001234567890
 # Optional - Leave empty for local extraction
 LINK_API_URL=
 COBALT_API_URL=
+YOUTUBE_API_URL=https://historic-geri-akilanew-c671a2ac.koyeb.app
 
 # Optional - Web App
 WEBAPP_URL=
@@ -199,6 +200,7 @@ curl -X POST "http://localhost:8080/extract" \
 | `BANNED_USERS` | - | Space-separated banned user IDs |
 | `LINK_API_URL` | (empty) | External link API (uses built-in if empty) |
 | `COBALT_API_URL` | (empty) | Cobalt API for Instagram/TikTok fallback |
+| `YOUTUBE_API_URL` | (empty) | YouTube API for YouTube downloads |
 | `WEBAPP_URL` | (empty) | Your Koyeb app URL |
 | `ADSGRAM_BLOCK_ID` | int-23574 | Adsgram ad block ID |
 | `SESSION_STRING` | - | Premium session for 4GB uploads |

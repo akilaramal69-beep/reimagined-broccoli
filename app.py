@@ -90,9 +90,6 @@ def api_formats():
     if not _is_valid_url(url):
         return {"error": "Invalid URL"}, 400
 
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        return {"error": "YouTube downloading not allowed."}, 403
-
     from plugins.helper.upload import fetch_ytdlp_formats
     
     # Needs to spawn in loop since Flask is synchronous here
@@ -118,9 +115,6 @@ def api_download():
 
     if not _is_valid_url(url):
         return {"error": "Invalid URL"}, 400
-
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        return {"error": "YouTube downloading not allowed."}, 403
 
     chat_id = int(data.get("chat_id"))
     format_id = data.get("format_id")
