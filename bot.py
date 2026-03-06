@@ -20,35 +20,15 @@ async def ping_handler(client, message):
     print(f"📥 Received /ping from {message.from_user.id} at {time.time()}")
     await message.reply_text("🏓 Pong! Bot is alive and well.")
 
+def run_health_server():
+    from app import app as flask_app
+    from waitress import serve
     port = int(os.environ.get("PORT", 8080))
     print(f"🌍 Starting health & progress server with Waitress (Production) on port {port}...")
     serve(flask_app, host="0.0.0.0", port=port, threads=100)
 
 
-def setup_po_token_server():
-    """
-    Ensure the Node.js PO Token server dependencies are installed dynamically
-    so we don't need to manually check-in node_modules to GitHub.
-    """
-    import shutil
-    if not shutil.which("npm"):
-        print("⚠️ Warning: 'npm' not found. Skipping Node.js PO Token server setup.")
-        return None
 
-    if not os.path.exists("package.json"):
-        print("📦 Initializing package.json for PO Token server...")
-        subprocess.run(["npm", "init", "-y"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-    if not os.path.exists("node_modules/youtube-po-token-generator") or not os.path.exists("node_modules/express"):
-        print("📦 Installing Express and YouTube PO Token Generator dependencies...")
-        subprocess.run(
-            ["npm", "install", "express", "youtube-po-token-generator"],
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL
-        )
-        print("✅ Node.js dependencies installed.")
-    
-    return "po_server.js"
 
 
 if __name__ == "__main__":
@@ -107,24 +87,8 @@ if __name__ == "__main__":
 
     # ── Start Background Services ──────────────────────────────────────────
     
-    print("🚀 Starting youtube-po-token-generator (Node.js) server...")
-    po_script = setup_po_token_server()
-    pot_process = None
-    if po_script and os.path.exists(po_script):
-        try:
-            # Run on port 4416 (default)
-            pot_cmd = ["node", po_script]
-            pot_process = subprocess.Popen(
-                pot_cmd, 
-                stdout=subprocess.DEVNULL, 
-                stderr=subprocess.DEVNULL
-            )
-            print("✅ Node.js PO Token server started on port 4416.")
-            
-            # Ensure it shuts down when the bot exits
-            atexit.register(lambda: pot_process.terminate() if pot_process else None)
-        except Exception as e:
-            print(f"⚠️ Failed to start Node.js PO Token server: {e}")
+    # Service management is handled by start.sh in the container
+    print("🚀 Background services managed by container runtime.")
             
     print("🚀 Starting aria2c RPC daemon...")
     try:
