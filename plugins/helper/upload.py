@@ -364,11 +364,15 @@ def is_cobalt_url(url: str) -> bool:
 def is_youtube_url(url: str) -> bool:
     """Return True if the URL is a YouTube URL."""
     if not Config.YOUTUBE_API_URL:
+        Config.LOGGER.info(f"YouTube API URL not configured, YOUTUBE_API_URL env var is empty")
         return False
     try:
         host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
-        return host in ("youtube.com", "youtu.be", "www.youtube.com", "www.youtu.be")
-    except Exception:
+        is_yt = host in ("youtube.com", "youtu.be", "www.youtube.com", "www.youtu.be")
+        Config.LOGGER.info(f"YouTube URL check: host={host}, is_youtube={is_yt}, api_url={Config.YOUTUBE_API_URL}")
+        return is_yt
+    except Exception as e:
+        Config.LOGGER.warning(f"YouTube URL parse error: {e}")
         return False
 
 
@@ -844,17 +848,22 @@ async def fetch_ytdlp_formats(url: str) -> dict:
 
     # For YouTube: try custom YouTube API first
     if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        Config.LOGGER.info(f"YouTube format extraction: {url}")
+        Config.LOGGER.info(f"YouTube format extraction: {url}, API_URL={Config.YOUTUBE_API_URL}")
         
         # Try custom YouTube API if configured
         if Config.YOUTUBE_API_URL:
+            Config.LOGGER.info("Using YouTube API for format extraction")
             try:
                 result = await fetch_youtube_formats(url)
                 if result and result.get("formats"):
                     Config.LOGGER.info(f"YouTube API returned {len(result['formats'])} formats")
                     return result
+                else:
+                    Config.LOGGER.warning("YouTube API returned empty formats")
             except Exception as e:
-                Config.LOGGER.warning(f"YouTube API failed, trying other methods: {e}")
+                Config.LOGGER.warning(f"YouTube API failed: {e}")
+        else:
+            Config.LOGGER.info("YOUTUBE_API_URL not set, using fallback")
         
         # Fall back to external extract
         info = await external_extract_ytdlp(url)
