@@ -46,8 +46,14 @@ RUN playwright install chromium || true
 # Copy project files
 COPY . .
 
-# Install Node.js dependencies for both root and youtube_api
-RUN npm install
+# Install Node.js dependencies for the root (PO Token Server)
+RUN if [ -f package.json ]; then \
+    npm install; \
+    else \
+    npm init -y && npm install express youtube-po-token-generator; \
+    fi
+
+# Install Node.js dependencies for youtube_api
 RUN cd youtube_api && npm install
 
 # Create downloads directories
@@ -58,8 +64,8 @@ ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV YOUTUBE_API_URL=http://localhost:8001
 ENV PORT=8080
 
-# Make start script executable
-RUN chmod +x start.sh
+# Make start script executable and fix Windows line endings
+RUN chmod +x start.sh && sed -i 's/\r$//' start.sh
 
 # Koyeb expects a web service to listen on port 8080 (the bot's health server)
 EXPOSE 8080
