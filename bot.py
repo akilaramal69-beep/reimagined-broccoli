@@ -20,11 +20,9 @@ async def ping_handler(client, message):
     print(f"📥 Received /ping from {message.from_user.id} at {time.time()}")
     await message.reply_text("🏓 Pong! Bot is alive and well.")
 
-def run_health_server():
-    from app import app as flask_app
-    from waitress import serve
-    print("🌍 Starting health & progress server with Waitress (Production)...")
-    serve(flask_app, host="0.0.0.0", port=8080, threads=100)
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🌍 Starting health & progress server with Waitress (Production) on port {port}...")
+    serve(flask_app, host="0.0.0.0", port=port, threads=100)
 
 
 def setup_po_token_server():

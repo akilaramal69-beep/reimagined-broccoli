@@ -510,6 +510,18 @@ async def download_youtube(
                             os.remove(out_path)
                         raise asyncio.CancelledError("Download cancelled by user.")
                     
+                    # ⚠️ BUG FIX: Filter out SSE data headers ('data: ...\n\n') that might leak from the API
+                    if chunk.startswith(b"data: "):
+                        # If the chunk is JUST SSE markers, skip it
+                        # If it contains SSE markers then binary data, we might need more complex filtering
+                        # But typically the API sends them on separate writes.
+                        if b"\n\n" in chunk:
+                            parts = chunk.split(b"\n\n", 1)
+                            # Check if the part before \n\n is strictly an SSE 'data:' line
+                            if parts[0].startswith(b"data: "):
+                                chunk = parts[1] if len(parts) > 1 else b""
+                                if not chunk: continue
+
                     await f.write(chunk)
                     downloaded += len(chunk)
                     
@@ -543,7 +555,11 @@ async def download_youtube(
         return out_path, mime
             
     except Exception as e:
-        raise ValueError(f"YouTube download failed: {e}")
+        # If it's an API error (500, etc), raise it so download_url can fallback
+        error_msg = str(e)
+        if "YouTube API returned" in error_msg or "ConnectionError" in error_msg:
+            raise ValueError(f"YOUTUBE_API_ERROR: {error_msg}")
+        raise ValueError(f"YouTube download failed: {error_msg}")
 
 
 async def fetch_link_api(url: str) -> str | None:
@@ -693,7 +709,19 @@ async def fetch_ytdlp_title(url: str) -> str | None:
     Extract the video title from yt-dlp (no download).
     Returns a clean filename like 'My Video Title.mp4', or None on failure.
     """
-    # Block YouTube - title extraction disabled
+    # ── YouTube API Fallback ──────────────────────────────────────────────────
+    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+        if Config.YOUTUBE_API_URL:
+            Config.LOGGER.info(f"Fetching YouTube title via API: {url}")
+            try:
+                info = await fetch_youtube_info(url)
+                if info and info.get("title"):
+                    title = info.get("title")
+                    title = re.sub(r'[\\/*?"<>|:\n\r\t]', "_", title).strip()
+                    return f"{title[:80]}.mp4"
+            except Exception as e:
+                Config.LOGGER.warning(f"YouTube title API fetch failed: {e}")
+
     # SECONDARY FALLBACK: Try external API (link-api) if local yt-dlp fails
     if Config.LINK_API_URL:
         Config.LOGGER.info(f"Fallback title extraction via link-api for: {url}")
@@ -838,6 +866,18 @@ async def get_best_filename(url: str, default_name: str = "downloaded_file") -> 
     return await fetch_http_filename(url, default_name)
 
 
+async def get_po_token() -> dict | None:
+    """Fetch a PO Token from the local server."""
+    try:
+        session = await get_http_session()
+        async with session.get("http://localhost:4416/", timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 200:
+                return await resp.json()
+    except Exception as e:
+        Config.LOGGER.warning(f"Failed to fetch PO Token from local server: {e}")
+    return None
+
+
 async def fetch_ytdlp_formats(url: str) -> dict:
     """
     Fetch available video formats from yt-dlp.
@@ -864,6 +904,9 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                 Config.LOGGER.warning(f"YouTube API failed: {e}")
         else:
             Config.LOGGER.info("YOUTUBE_API_URL not set, using fallback")
+            # If no API configured, attempt external extract directly to avoid the slow local yt-dlp check
+            info = await external_extract_ytdlp(url)
+            if info: return info
         
         # Fall back to external extract
         info = await external_extract_ytdlp(url)
@@ -947,6 +990,8 @@ async def fetch_ytdlp_formats(url: str) -> dict:
 
     def _fetch():
         try:
+            po = asyncio.run_coroutine_threadsafe(get_po_token(), loop).result()
+            
             opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -954,11 +999,15 @@ async def fetch_ytdlp_formats(url: str) -> dict:
                 "force_ipv4": True,
                 "nocheckcertificate": True,
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "impersonate": "chrome",
                 "extractor_args": {
                     "youtube": {"player_client": ["web", "creator"]},
-                    "youtubepot-bgutilhttp": {"base_url": ["http://localhost:4416"]}
                 }
             }
+
+            if po and po.get("poToken") and po.get("visitorData"):
+                opts["extractor_args"]["youtube"]["po_token"] = f"web+{po['poToken']}"
+                opts["extractor_args"]["youtube"]["visitor_data"] = po["visitorData"]
 
             if Config.COOKIES_FILE and os.path.exists(Config.COOKIES_FILE):
                 opts["cookiefile"] = Config.COOKIES_FILE
@@ -1360,6 +1409,7 @@ async def download_ytdlp(
         "retries": 15,
         "fragment_retries": 15,
         "buffersize": 1048576,               # 1MB Buffer for speed
+        "impersonate": "chrome",
         "extractor_args": {
             "youtube": {
                 "player_client": ["web", "creator"],
@@ -1879,7 +1929,12 @@ async def download_url(url: str, filename: str, progress_msg, start_time_ref: li
             await progress_msg.edit_text("📥 **Downloading from YouTube…** 🎬", reply_markup=cancel_button(user_id))
             return await download_youtube(url, filename, progress_msg, start_time_ref, user_id, format_id=format_id, cancel_ref=cancel_ref)
         except Exception as e:
-            Config.LOGGER.warning(f"YouTube API failed, falling back to yt-dlp: {e}")
+            if "YOUTUBE_API_ERROR" in str(e):
+                Config.LOGGER.warning(f"YouTube API failed (500/Connection), falling back to local yt-dlp: {e}")
+                # Fall through to yt-dlp logic
+            else:
+                Config.LOGGER.error(f"YouTube download failed: {e}")
+                raise
 
     # ── Route yt-dlp-supported platforms ─────────────────────────────────────
     if is_ytdlp_url(url):

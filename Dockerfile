@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies including Playwright requirements
+# Install system dependencies including Node.js and Playwright requirements
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -8,6 +8,9 @@ RUN apt-get update && \
     git \
     gcc \
     python3-dev \
+    curl \
+    ca-certificates \
+    gnupg \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -27,11 +30,13 @@ RUN apt-get update && \
     libatspi2.0-0 \
     fonts-unifont \
     fonts-liberation \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies first (cached layer)
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -41,14 +46,23 @@ RUN playwright install chromium || true
 # Copy project files
 COPY . .
 
-# Create downloads directory
-RUN mkdir -p DOWNLOADS
+# Install Node.js dependencies for both root and youtube_api
+RUN npm install
+RUN cd youtube_api && npm install
 
-# Set ffmpeg path explicitly so yt-dlp always finds it
+# Create downloads directories
+RUN mkdir -p DOWNLOADS youtube_api/downloads
+
+# Set environment variables
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV YOUTUBE_API_URL=http://localhost:8001
+ENV PORT=8080
 
-# Koyeb expects a web service to listen on port 8080
+# Make start script executable
+RUN chmod +x start.sh
+
+# Koyeb expects a web service to listen on port 8080 (the bot's health server)
 EXPOSE 8080
 
-# Start the bot (Flask health server runs in a background thread inside bot.py)
-CMD ["python3", "bot.py"]
+# Use the startup script to launch all processes
+CMD ["./start.sh"]

@@ -47,7 +47,7 @@ class Config:
     SESSION_NAME: str = "url_uploader_bot"
     COBALT_API_URL: str = os.environ.get("COBALT_API_URL", "")
     LINK_API_URL: str = os.environ.get("LINK_API_URL", "")
-    YOUTUBE_API_URL: str = os.environ.get("YOUTUBE_API_URL", "")
+    YOUTUBE_API_URL: str = os.environ.get("YOUTUBE_API_URL", "http://localhost:8001")
     ALLOW_BOT_URL_UPLOAD: bool = os.environ.get("ALLOW_BOT_URL_UPLOAD", "True").lower() == "true"
     ADSGRAM_BLOCK_ID: str = os.environ.get("ADSGRAM_BLOCK_ID", "int-23574")
     WEBAPP_URL: str = os.environ.get("WEBAPP_URL", "")
