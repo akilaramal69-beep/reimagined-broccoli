@@ -48,6 +48,10 @@ class Config:
     COBALT_API_URL: str = os.environ.get("COBALT_API_URL", "")
     LINK_API_URL: str = os.environ.get("LINK_API_URL", "")
     YOUTUBE_API_URL: str = os.environ.get("YOUTUBE_API_URL", "http://localhost:8001")
+    # Auto-fix: If it's the public Koyeb URL of this app, we MUST use localhost:8001 internally.
+    # Public URLs on Koyeb hit port 8080 (Flask), while the YouTube API is on 8001.
+    if "koyeb.app" in YOUTUBE_API_URL.lower():
+        YOUTUBE_API_URL = "http://localhost:8001"
     ALLOW_BOT_URL_UPLOAD: bool = os.environ.get("ALLOW_BOT_URL_UPLOAD", "True").lower() == "true"
     ADSGRAM_BLOCK_ID: str = os.environ.get("ADSGRAM_BLOCK_ID", "int-23574")
     WEBAPP_URL: str = os.environ.get("WEBAPP_URL", "")

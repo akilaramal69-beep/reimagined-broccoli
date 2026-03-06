@@ -390,9 +390,10 @@ async def fetch_youtube_info(url: str) -> dict | None:
                 Config.LOGGER.info(f"YouTube API info fetched: {data.get('title', 'unknown')}")
                 return data
             else:
-                Config.LOGGER.warning(f"YouTube API returned {resp.status}")
+                text = await resp.text()
+                Config.LOGGER.warning(f"YouTube API info returned {resp.status}. Response: {text[:200]}")
     except Exception as e:
-        Config.LOGGER.warning(f"YouTube API fetch failed: {e}")
+        Config.LOGGER.warning(f"YouTube API info fetch failed: {e}")
     return None
 
 
@@ -424,8 +425,10 @@ async def fetch_youtube_formats(url: str) -> dict:
                             "bitrate": 0,
                             "url": f.get("url")
                         })
-                
                 return {"formats": format_results, "title": title}
+            else:
+                text = await resp.text()
+                Config.LOGGER.warning(f"YouTube API formats returned {resp.status}. Response: {text[:200]}")
     except Exception as e:
         Config.LOGGER.error(f"YouTube API formats failed: {e}")
     
