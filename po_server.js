@@ -12,21 +12,28 @@ const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 async function rotateToken() {
     if (isGenerating) return;
     isGenerating = true;
-    console.log(`[${new Date().toISOString()}] Background Generation: Starting...`);
+    console.log(`[${new Date().toISOString()}] PO Token: Starting background generation...`);
 
     try {
-        const result = await generate();
+        // We set a strict timeout for the generator itself to prevent hang-ups
+        const result = await Promise.race([
+            generate(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Generator Timeout')), 60000))
+        ]);
+
         cachedToken = {
             visitorData: result.visitorData,
             poToken: result.poToken,
             generatedAt: new Date().toISOString()
         };
         lastGenerationTime = Date.now();
-        console.log(`[${new Date().toISOString()}] Background Generation: Success!`);
+        console.log(`[${new Date().toISOString()}] PO Token: Update successful.`);
     } catch (error) {
-        console.error(`[${new Date().toISOString()}] Background Generation: Failed:`, error.message);
+        console.error(`[${new Date().toISOString()}] PO Token: Update failed:`, error.message);
     } finally {
         isGenerating = false;
+        // Clean up global state if possible (Node garbage collection hint)
+        if (global.gc) global.gc();
     }
 }
 
@@ -34,32 +41,36 @@ async function rotateToken() {
 rotateToken();
 
 // Auto-rotate every 30 minutes
-setInterval(rotateToken, CACHE_DURATION);
+const rotationInterval = setInterval(rotateToken, CACHE_DURATION);
 
-app.get('/', async (req, res) => {
-    if (!cachedToken) {
-        // If we don't have a token yet, wait for the first generation if it's in progress
-        if (isGenerating) {
-            console.log(`[${new Date().toISOString()}] Request received: Generation in progress, waiting...`);
-            let attempts = 0;
-            while (isGenerating && attempts < 30) {
-                await new Promise(r => setTimeout(r, 2000));
-                attempts++;
-            }
-        }
-    }
-
+app.get('/', (req, res) => {
+    // If we have a token (even if it's getting old), return it immediately for performance
     if (cachedToken) {
-        // If token is getting old (e.g. older than 25 mins), trigger an async refresh but return the old one for speed
-        if (Date.now() - lastGenerationTime > (CACHE_DURATION - 5 * 60 * 1000)) {
+        // Trigger background refresh if older than 25 mins
+        if (!isGenerating && (Date.now() - lastGenerationTime > (CACHE_DURATION - 5 * 60 * 1000))) {
             rotateToken();
         }
         return res.json(cachedToken);
     }
 
-    res.status(503).json({ error: "PO Token generation in progress or failed. Please retry in a moment." });
+    // If no token is ready yet (e.g., first few seconds of boot)
+    if (isGenerating) {
+        return res.status(503).json({
+            error: "Initial PO Token generation in progress. Please retry in 10 seconds.",
+            retryAfter: 10
+        });
+    }
+
+    res.status(500).json({ error: "PO Token generation failed. Check server logs." });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`PO Token Server running on http://localhost:${PORT}`);
+    console.log(`Memory limit is being managed via --max-old-space-size in start.sh`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    clearInterval(rotationInterval);
+    process.exit(0);
 });
