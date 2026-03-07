@@ -42,7 +42,7 @@ async def extract_links(url: str, use_browser: bool = True, timeout: int = 25) -
         # Fallback: try yt-dlp extraction
         try:
             import yt_dlp
-            ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+            ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'javascript_runtimes': ['deno']}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if info and info.get('url'):

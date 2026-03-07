@@ -31,8 +31,12 @@ RUN apt-get update && \
     fonts-unifont \
     fonts-liberation \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y nodejs unzip \
+    && curl -fsSL https://deno.land/x/install/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
+
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="$DENO_INSTALL/bin:$PATH"
 
 WORKDIR /app
 
@@ -121,7 +125,7 @@ function runYtdlp(args) {
 
 async function getVideoInfo(url) {
     const po = await getPoToken();
-    const args = ['--dump-json', '--no-download', '--impersonate', 'chrome'];
+    const args = ['--dump-json', '--no-download', '--impersonate', 'chrome', '--js-runtimes', 'deno'];
     if (po && po.poToken && po.visitorData) {
         args.push('--extractor-args', `youtube:po_token=web+${po.poToken};visitor_data=${po.visitorData}`);
     }
@@ -133,7 +137,7 @@ async function getVideoInfo(url) {
 
 async function getFormats(url) {
     const po = await getPoToken();
-    const args = ['--dump-json', '--no-download', '--flat', '--impersonate', 'chrome'];
+    const args = ['--dump-json', '--no-download', '--flat', '--impersonate', 'chrome', '--js-runtimes', 'deno'];
     if (po && po.poToken && po.visitorData) {
         args.push('--extractor-args', `youtube:po_token=web+${po.poToken};visitor_data=${po.visitorData}`);
     }
@@ -168,6 +172,7 @@ async function downloadVideo(url, formatId, res) {
     return new Promise((resolve, reject) => {
         const args = [
             '--impersonate', 'chrome',
+            '--js-runtimes', 'deno',
             '-f', formatId || 'best',
             '-o', outputPath,
             '--no-playlist',

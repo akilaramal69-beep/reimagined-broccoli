@@ -1413,6 +1413,7 @@ async def download_ytdlp(
         "fragment_retries": 15,
         "buffersize": 1048576,               # 1MB Buffer for speed
         "impersonate": "chrome",
+        "javascript_runtimes": ["deno"],
         "extractor_args": {
             "youtube": {
                 "player_client": ["web", "creator"],
