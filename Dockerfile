@@ -93,7 +93,10 @@ function getYtdlpCommand() {
 async function getPoToken() {
     try {
         const res = await axios.get('http://localhost:4416/', { timeout: 30000 });
-        return res.data;
+        if (res.data && res.data.poToken) {
+            return res.data;
+        }
+        return null;
     } catch (e) {
         console.error("PO Token Fetch Failed (Optional):", e.message);
         return null;
