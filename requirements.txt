@@ -11,7 +11,7 @@ psutil==5.9.8
 filetype==1.2.0
 Pillow==10.3.0
 requests==2.32.3
-yt-dlp
+yt-dlp>=2025.2.19
 bgutil-ytdlp-pot-provider
 python-dotenv==1.0.1
 aria2p

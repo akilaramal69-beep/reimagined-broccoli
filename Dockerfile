@@ -59,252 +59,265 @@ RUN if [ -f package.json ]; then \
     fi
 
 # Apply fixes to youtube_api/server.js and install its dependencies
-RUN printf "require('dotenv').config();\n\
-    const express = require('express');\n\
-    const { exec, spawn } = require('child_process');\n\
-    const fs = require('fs-extra');\n\
-    const path = require('path');\n\
-    const cors = require('cors');\n\
-    const axios = require('axios');\n\
-    \n\
-    const app = express();\n\
-    const PORT = process.env.PORT || 8080;\n\
-    \n\
-    app.use(cors());\n\
-    app.use(express.json());\n\
-    app.use(express.urlencoded({ extended: true }));\n\
-    app.set('view engine', 'ejs');\n\
-    app.set('views', path.join(__dirname, 'views'));\n\
-    app.use(express.static('public'));\n\
-    \n\
-    const DOWNLOAD_DIR = path.join(__dirname, 'downloads');\n\
-    fs.ensureDirSync(DOWNLOAD_DIR);\n\
-    \n\
-    function getYtdlpCommand() {\n\
-    return process.env.YTDLP_PATH || 'yt-dlp';\n\
-    }\n\
-    \n\
-    async function getPoToken() {\n\
-    try {\n\
-    const res = await axios.get('http://localhost:4416/', { timeout: 30000 });\n\
-    return res.data;\n\
-    } catch (e) {\n\
-    console.error(\"PO Token Fetch Failed (Optional):\", e.message);\n\
-    return null;\n\
-    }\n\
-    }\n\
-    \n\
-    async function getVideoInfo(url) {\n\
-    const po = await getPoToken();\n\
-    let poArgs = \"\";\n\
-    if (po && po.poToken && po.visitorData) {\n\
-    poArgs = \` --extractor-args \"youtube:po_token=web+\${po.poToken};visitor_data=\${po.visitorData}\"\`;\n\
-    }\n\
-    return new Promise((resolve, reject) => {\n\
-    const cmd = \`\"\${getYtdlpCommand()}\" --dump-json --no-download --impersonate chrome\${poArgs} \"\${url}\"\`;\n\
-    exec(cmd, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {\n\
-    if (error) {\n\
-    reject(error);\n\
-    return;\n\
-    }\n\
-    try {\n\
-    const info = JSON.parse(stdout);\n\
-    resolve(info);\n\
-    } catch (e) {\n\
-    reject(e);\n\
-    }\n\
-    });\n\
-    });\n\
-    }\n\
-    \n\
-    async function getFormats(url) {\n\
-    const po = await getPoToken();\n\
-    let poArgs = \"\";\n\
-    if (po && po.poToken && po.visitorData) {\n\
-    poArgs = \` --extractor-args \"youtube:po_token=web+\${po.poToken};visitor_data=\${po.visitorData}\"\`;\n\
-    }\n\
-    return new Promise((resolve, reject) => {\n\
-    const cmd = \`\"\${getYtdlpCommand()}\" --dump-json --no-download --flat --impersonate chrome\${poArgs} \"\${url}\"\`;\n\
-    exec(cmd, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {\n\
-    if (error) {\n\
-    reject(error);\n\
-    return;\n\
-    }\n\
-    try {\n\
-    const info = JSON.parse(stdout);\n\
-    const formats = info.formats || [];\n\
-    const filtered = formats.map(f => ({\n\
-    format_id: f.format_id,\n\
-    ext: f.ext,\n\
-    resolution: f.resolution || 'audio only',\n\
-    filesize: f.filesize,\n\
-    fmt_note: f.format_note,\n\
-    vcodec: f.vcodec,\n\
-    acodec: f.acodec\n\
-    })).filter(f => f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a');\n\
-    resolve({\n\
-    title: info.title,\n\
-    thumbnail: info.thumbnail,\n\
-    duration: info.duration,\n\
-    uploader: info.uploader,\n\
-    formats: filtered\n\
-    });\n\
-    } catch (e) {\n\
-    reject(e);\n\
-    }\n\
-    });\n\
-    });\n\
-    }\n\
-    \n\
-    async function downloadVideo(url, formatId, res) {\n\
-    const filename = \`video_\${Date.now()}\`;\n\
-    const outputPath = path.join(DOWNLOAD_DIR, '%%(title)s.%%(ext)s');\n\
-    \n\
-    const po = await getPoToken();\n\
-    \n\
-    return new Promise((resolve, reject) => {\n\
-    const args = [\n\
-    '--impersonate', 'chrome',\n\
-    '-f', formatId || 'best',\n\
-    '-o', outputPath,\n\
-    '--no-playlist',\n\
-    '--no-warnings',\n\
-    '--progress'\n\
-    ];\n\
-    \n\
-    if (po && po.poToken && po.visitorData) {\n\
-    args.push('--extractor-args', \`youtube:po_token=web+\${po.poToken};visitor_data=\${po.visitorData}\`);\n\
-    }\n\
-    \n\
-    args.push(url);\n\
-    \n\
-    const proc = spawn(getYtdlpCommand(), args);\n\
-    let stderr = '';\n\
-    \n\
-    proc.stderr.on('data', (data) => {\n\
-    stderr += data.toString();\n\
-    const progressMatch = data.toString().match(/(\\\\d+\\\\.?\\\\d*)%%/);\n\
-    if (progressMatch && res) {\n\
-    res.write(\`data: \${progressMatch[1]}\\n\\n\`);\n\
-    }\n\
-    });\n\
-    \n\
-    proc.on('close', (code) => {\n\
-    if (code === 0) {\n\
-    const files = fs.readdirSync(DOWNLOAD_DIR);\n\
-    const downloadedFile = files.find(f => f.startsWith('video_') || f.includes('.'));\n\
-    if (downloadedFile) {\n\
-    resolve(path.join(DOWNLOAD_DIR, downloadedFile));\n\
-    } else {\n\
-    reject(new Error('Download failed'));\n\
-    }\n\
-    } else {\n\
-    reject(new Error(stderr || 'Download failed'));\n\
-    }\n\
-    });\n\
-    \n\
-    proc.on('error', reject);\n\
-    });\n\
-    }\n\
-    \n\
-    app.get('/', (req, res) => {\n\
-    res.render('index', {\n\
-    title: 'YouTube Downloader API',\n\
-    apiUrl: process.env.API_URL || \`http://localhost:\${PORT}\` \n\
-    });\n\
-    });\n\
-    \n\
-    app.get('/api/info', async (req, res) => {\n\
-    try {\n\
-    const { url } = req.query;\n\
-    if (!url) {\n\
-    return res.status(400).json({ error: 'URL is required' });\n\
-    }\n\
-    const info = await getVideoInfo(url);\n\
-    res.json({\n\
-    title: info.title,\n\
-    thumbnail: info.thumbnail,\n\
-    duration: info.duration,\n\
-    uploader: info.uploader,\n\
-    description: info.description,\n\
-    view_count: info.view_count,\n\
-    upload_date: info.upload_date\n\
-    });\n\
-    } catch (error) {\n\
-    res.status(500).json({ error: error.message });\n\
-    }\n\
-    });\n\
-    \n\
-    app.get('/api/formats', async (req, res) => {\n\
-    try {\n\
-    const { url } = req.query;\n\
-    if (!url) {\n\
-    return res.status(400).json({ error: 'URL is required' });\n\
-    }\n\
-    const formats = await getFormats(url);\n\
-    res.json(formats);\n\
-    } catch (error) {\n\
-    res.status(500).json({ error: error.message });\n\
-    }\n\
-    });\n\
-    \n\
-    app.post('/api/download', async (req, res) => {\n\
-    try {\n\
-    const { url, formatId } = req.body;\n\
-    if (!url) {\n\
-    return res.status(400).json({ error: 'URL is required' });\n\
-    }\n\
-    \n\
-    const filePath = await downloadVideo(url, formatId, null);\n\
-    \n\
-    res.download(filePath, path.basename(filePath), (err) => {\n\
-    if (err) console.error('Download error:', err);\n\
-    fs.remove(filePath).catch(() => { });\n\
-    });\n\
-    \n\
-    } catch (error) {\n\
-    res.status(500).json({ error: error.message });\n\
-    }\n\
-    });\n\
-    \n\
-    app.get('/api/download', async (req, res) => {\n\
-    try {\n\
-    const { url, formatId } = req.query;\n\
-    if (!url) {\n\
-    return res.status(400).json({ error: 'URL is required' });\n\
-    }\n\
-    \n\
-    const filePath = await downloadVideo(url, formatId, null);\n\
-    \n\
-    res.download(filePath, path.basename(filePath), (err) => {\n\
-    if (err) console.error('Download error:', err);\n\
-    fs.remove(filePath).catch(() => { });\n\
-    });\n\
-    \n\
-    } catch (error) {\n\
-    res.status(500).json({ error: error.message });\n\
-    }\n\
-    });\n\
-    \n\
-    app.get('/health', (req, res) => {\n\
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });\n\
-    });\n\
-    \n\
-    app.use((err, req, res, next) => {\n\
-    console.error(err.stack);\n\
-    res.status(500).json({ error: 'Internal server error' });\n\
-    });\n\
-    \n\
-    app.listen(PORT, '0.0.0.0', () => {\n\
-    console.log(\`YouTube Downloader API running on port \${PORT}\`);\n\
-    console.log(\`Health check: http://localhost:\${PORT}/health\`);\n\
-    });\n\
-    \n\
-    process.on('SIGTERM', () => {\n\
-    console.log('Cleaning up...');\n\
-    fs.remove(DOWNLOAD_DIR).catch(() => { });\n\
-    process.exit(0);\n\
-    });" > youtube_api/server.js && cd youtube_api && npm install
+# Apply fixes to youtube_api/server.js and install its dependencies
+RUN cat <<'EOF' > youtube_api/server.js
+require('dotenv').config();
+const express = require('express');
+const { exec, spawn } = require('child_process');
+const fs = require('fs-extra');
+const path = require('path');
+const cors = require('cors');
+const axios = require('axios');
+
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(express.static('public'));
+
+const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
+fs.ensureDirSync(DOWNLOAD_DIR);
+
+function getYtdlpCommand() {
+    return process.env.YTDLP_PATH || 'yt-dlp';
+}
+
+async function getPoToken() {
+    try {
+        const res = await axios.get('http://localhost:4416/', { timeout: 30000 });
+        return res.data;
+    } catch (e) {
+        console.error("PO Token Fetch Failed (Optional):", e.message);
+        return null;
+    }
+}
+
+function runYtdlp(args) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(getYtdlpCommand(), args);
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => stdout += data.toString());
+        proc.stderr.on('data', (data) => stderr += data.toString());
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                resolve({ stdout, stderr });
+            } else {
+                reject(new Error(stderr || `yt-dlp failed with code ${code}`));
+            }
+        });
+
+        proc.on('error', (err) => {
+            reject(new Error(`Spawn error: ${err.message}`));
+        });
+    });
+}
+
+async function getVideoInfo(url) {
+    const po = await getPoToken();
+    const args = ['--dump-json', '--no-download', '--impersonate', 'chrome'];
+    if (po && po.poToken && po.visitorData) {
+        args.push('--extractor-args', `youtube:po_token=web+${po.poToken};visitor_data=${po.visitorData}`);
+    }
+    args.push(url);
+
+    const { stdout } = await runYtdlp(args);
+    return JSON.parse(stdout);
+}
+
+async function getFormats(url) {
+    const po = await getPoToken();
+    const args = ['--dump-json', '--no-download', '--flat', '--impersonate', 'chrome'];
+    if (po && po.poToken && po.visitorData) {
+        args.push('--extractor-args', `youtube:po_token=web+${po.poToken};visitor_data=${po.visitorData}`);
+    }
+    args.push(url);
+
+    const { stdout } = await runYtdlp(args);
+    const info = JSON.parse(stdout);
+    const formats = info.formats || [];
+    const filtered = formats.map(f => ({
+        format_id: f.format_id,
+        ext: f.ext,
+        resolution: f.resolution || 'audio only',
+        filesize: f.filesize,
+        fmt_note: f.format_note,
+        vcodec: f.vcodec,
+        acodec: f.acodec
+    })).filter(f => f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a');
+
+    return {
+        title: info.title,
+        thumbnail: info.thumbnail,
+        duration: info.duration,
+        uploader: info.uploader,
+        formats: filtered
+    };
+}
+
+async function downloadVideo(url, formatId, res) {
+    const outputPath = path.join(DOWNLOAD_DIR, '%(title)s.%(ext)s');
+    const po = await getPoToken();
+
+    return new Promise((resolve, reject) => {
+        const args = [
+            '--impersonate', 'chrome',
+            '-f', formatId || 'best',
+            '-o', outputPath,
+            '--no-playlist',
+            '--no-warnings',
+            '--progress'
+        ];
+
+        if (po && po.poToken && po.visitorData) {
+            args.push('--extractor-args', `youtube:po_token=web+${po.poToken};visitor_data=${po.visitorData}`);
+        }
+
+        args.push(url);
+
+        const proc = spawn(getYtdlpCommand(), args);
+        let stderr = '';
+
+        proc.stderr.on('data', (data) => {
+            stderr += data.toString();
+            const progressMatch = data.toString().match(/(\d+\.?\d*)%/);
+            if (progressMatch && res) {
+                res.write(`data: ${progressMatch[1]}\n\n`);
+            }
+        });
+
+        proc.on('close', (code) => {
+            if (code === 0) {
+                const files = fs.readdirSync(DOWNLOAD_DIR);
+                const downloadedFile = files.find(f => f.includes('.'));
+                if (downloadedFile) {
+                    resolve(path.join(DOWNLOAD_DIR, downloadedFile));
+                } else {
+                    reject(new Error('Download failed: file not found'));
+                }
+            } else {
+                reject(new Error(stderr || `Download failed with code ${code}`));
+            }
+        });
+
+        proc.on('error', reject);
+    });
+}
+
+app.get('/', (req, res) => {
+    res.render('index', {
+        title: 'YouTube Downloader API',
+        apiUrl: process.env.API_URL || `http://localhost:${PORT}`
+    });
+});
+
+app.get('/api/version', async (req, res) => {
+    try {
+        const { stdout } = await runYtdlp(['--version']);
+        res.json({ version: stdout.trim() });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/info', async (req, res) => {
+    try {
+        const { url } = req.query;
+        if (!url) {
+            return res.status(400).json({ error: 'URL is required' });
+        }
+        const info = await getVideoInfo(url);
+        res.json({
+            title: info.title,
+            thumbnail: info.thumbnail,
+            duration: info.duration,
+            uploader: info.uploader,
+            description: info.description,
+            view_count: info.view_count,
+            upload_date: info.upload_date
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/formats', async (req, res) => {
+    try {
+        const { url } = req.query;
+        if (!url) {
+            return res.status(400).json({ error: 'URL is required' });
+        }
+        const formats = await getFormats(url);
+        res.json(formats);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/download', async (req, res) => {
+    try {
+        const { url, formatId } = req.body;
+        if (!url) {
+            return res.status(400).json({ error: 'URL is required' });
+        }
+
+        const filePath = await downloadVideo(url, formatId, null);
+
+        res.download(filePath, path.basename(filePath), (err) => {
+            if (err) console.error('Download error:', err);
+            fs.remove(filePath).catch(() => { });
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/download', async (req, res) => {
+    try {
+        const { url, formatId } = req.query;
+        if (!url) {
+            return res.status(400).json({ error: 'URL is required' });
+        }
+
+        const filePath = await downloadVideo(url, formatId, null);
+
+        res.download(filePath, path.basename(filePath), (err) => {
+            if (err) console.error('Download error:', err);
+            fs.remove(filePath).catch(() => { });
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`YouTube Downloader API running on port ${PORT}`);
+});
+
+process.on('SIGTERM', () => {
+    console.log('Cleaning up...');
+    fs.remove(DOWNLOAD_DIR).catch(() => { });
+    process.exit(0);
+});
+EOF
+RUN cd youtube_api && npm install
 
 # Create downloads directories
 RUN mkdir -p DOWNLOADS youtube_api/downloads
